@@ -1,4 +1,4 @@
-sql-dump-and-backup2dropbox
+SQL dump and backup2dropbox
 ===========================
 
 This is a Database Dumper in php and mysql with PDO. This script is for dumpaning database and to move that in Dropbox.
