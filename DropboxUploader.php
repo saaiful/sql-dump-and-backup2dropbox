@@ -22,10 +22,11 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  *
- * @author Jaka Jancar [jaka@kubje.org] [http://jaka.kubje.org/]
- * @version 1.1.12
+ * @author Jaka Jancar <jaka@kubje.org> <http://jaka.kubje.org/>
+ * @version 1.1.17
+ * @license MIT <http://spdx.org/licenses/MIT>
  */
-class DropboxUploader {
+final class DropboxUploader {
     /**
      * Certificate Authority Certificate source types
      */
@@ -57,12 +58,12 @@ class DropboxUploader {
     const CODE_SCRAPING_FORM          = 0x10040801;
     const CODE_SCRAPING_LOGIN         = 0x10040802;
     const CODE_CURL_EXTENSION_MISSING = 0x10080101;
-    protected $email;
-    protected $password;
-    protected $caCertSourceType = self::CACERT_SOURCE_SYSTEM;
-    protected $caCertSource;
-    protected $loggedIn = FALSE;
-    protected $cookies = array();
+    private $email;
+    private $password;
+    private $caCertSourceType = self::CACERT_SOURCE_SYSTEM;
+    private $caCertSource;
+    private $loggedIn = FALSE;
+    private $cookies = array();
 
     /**
      * Constructor
@@ -110,25 +111,39 @@ class DropboxUploader {
             # intentionally left blank
         } else if (!is_string($remoteName)) {
             throw new Exception("Remote filename must be a string, is " . gettype($remoteDir) . " instead.", self::CODE_PARAMETER_TYPE_ERROR);
-        } else {
-            $source .= ';filename=' . $remoteName;
         }
 
         if (!$this->loggedIn)
             $this->login();
 
-        $data  = $this->request(self::HTTPS_DROPBOX_COM_HOME);
-        $token = $this->extractToken($data, self::HTTPS_DROPBOX_COM_UPLOAD);
+        $data       = $this->request(self::HTTPS_DROPBOX_COM_HOME);
+        $file       = $this->curlFileCreate($source, $remoteName);
+        $token      = $this->extractFormValue($data, 't');
+        $subjectUid = $this->extractFormValue($data, '_subject_uid');
 
         $postData = array(
-            'plain' => 'yes',
-            'file'  => '@' . $source,
-            'dest'  => $remoteDir,
-            't'     => $token
+            'plain'        => 'yes',
+            'file'         => $file,
+            'dest'         => $remoteDir,
+            't'            => $token,
+            '_subject_uid' => $subjectUid,
         );
+
         $data     = $this->request(self::HTTPS_DROPBOX_COM_UPLOAD, $postData);
         if (strpos($data, 'HTTP/1.1 302 FOUND') === FALSE)
             throw new Exception('Upload failed!', self::CODE_UPLOAD_ERROR);
+    }
+
+    private function curlFileCreate($source, $remoteName) {
+        if (function_exists('curl_file_create')) {
+            return curl_file_create($source, NULL, $remoteName);
+        }
+
+        if ($remoteName !== NULL) {
+            $source .= ';filename=' . $remoteName;
+        }
+
+        return '@' . $source;
     }
 
     public function uploadString($string, $remoteName, $remoteDir = '/') {
@@ -156,7 +171,7 @@ class DropboxUploader {
             throw $exception;
     }
 
-    protected function login() {
+    private function login() {
         $data  = $this->request(self::HTTPS_DROPBOX_COM_LOGIN);
         $token = $this->extractTokenFromLoginForm($data);
 
@@ -173,7 +188,7 @@ class DropboxUploader {
         $this->loggedIn = TRUE;
     }
 
-    protected function request($url, $postData = NULL) {
+    private function request($url, $postData = NULL) {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, (string) $url);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -216,17 +231,21 @@ class DropboxUploader {
         return $data;
     }
 
-    protected function extractToken($html, $formAction) {
-        $quot    = preg_quote($formAction, '/');
-        $pattern = '/<form [^>]*' . $quot . '[^>]*>.*?(?:<input [^>]*name="t" [^>]*value="(.*?)"[^>]*>).*?<\/form>/is';
+    private function extractFormValue($html, $name) {
+        $action  = self::HTTPS_DROPBOX_COM_UPLOAD;
+        $pattern = sprintf(
+            '/<form [^>]*%s[^>]*>.*?(?:<input [^>]*name="%s" [^>]*value="(.*?)"[^>]*>).*?<\/form>/is'
+            , preg_quote($action, '/')
+            , preg_quote($name, '/')
+        );
         if (!preg_match($pattern, $html, $matches))
-            throw new Exception("Cannot extract token! (form action is '$formAction')", self::CODE_SCRAPING_FORM);
+            throw new Exception(sprintf("Cannot extract '%s'! (form action is '%s')", $name, $action), self::CODE_SCRAPING_FORM);
         return $matches[1];
     }
 
-    protected function extractTokenFromLoginForm($html) {
-        // <input type="hidden" name="t" value="UJygzfv9DLLCS-is7cLwgG7z" />
-        if (!preg_match('#<input type="hidden" name="t" value="([A-Za-z0-9_-]+)" />#', $html, $matches))
+    private function extractTokenFromLoginForm($html) {
+        // , "TOKEN": "gCvxU6JVukrW0CUndRPruFvY",
+        if (!preg_match('#, "TOKEN": "([A-Za-z0-9_-]+)", #', $html, $matches))
             throw new Exception('Cannot extract login CSRF token.', self::CODE_SCRAPING_LOGIN);
         return $matches[1];
     }
